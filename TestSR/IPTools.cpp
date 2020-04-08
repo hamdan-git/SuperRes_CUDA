@@ -7,7 +7,7 @@
 using namespace std;
 
 //----------------------------------------------------------------------------
-void FindDimensionAfterRotation(int iInWidth, int iInHeight, double theta, int &iOutWidth, int &iOutHeight)
+void FindDimensionAfterRotation(int iInWidth, int iInHeight, double theta, double fMag, int &iOutWidth, int &iOutHeight)
 {
 	// Compute dimensions of the resulting bitmap
 	// First get the coordinates of the 3 corners other than origin
@@ -28,6 +28,9 @@ void FindDimensionAfterRotation(int iInWidth, int iInHeight, double theta, int &
 
 	iOutWidth = maxx - minx;
 	iOutHeight = maxy - miny;
+
+	iOutWidth *= fMag;
+	iOutHeight *= fMag;
 }
 //--------------------------------------------------------------
 template<typename T>

@@ -71,7 +71,7 @@ __global__ void RotateImageA_tex_kernel(float *outputImagekernel, int inWidth, i
 		outputImagekernel[row*outWidth + col] = tex2D(tex_rot_imgA, tu + 0.5f, tv + 0.5f);
 }
 
-__global__ void RotateImageA_kernel(float *inImagekernel, float *outputImagekernel, int inWidth, int inHeight, int outWidth, int outHeight, double theta)
+__global__ void RotateImageA_kernel(float *inImagekernel, float *outputImagekernel, int inWidth, int inHeight, int outWidth, int outHeight, double theta, double fMag)
 
 {
 	// Set row and colum for thread.
@@ -87,6 +87,8 @@ __global__ void RotateImageA_kernel(float *inImagekernel, float *outputImagekern
 
 	//tu /= (float)inWidth;
 	//tv /= (float)inHeight;
+	tu *= fMag;
+	tv *= fMag;
 	tu = (float)(tu + inWidth / 2);
 	tv = (float)(tv + inHeight / 2);
 
@@ -97,6 +99,24 @@ __global__ void RotateImageA_kernel(float *inImagekernel, float *outputImagekern
 		//outputImagekernel[row*outWidth + col] = getInterpolatedPixelA(tu, tv, inWidth, inHeight, inImagekernel);
 	}
 }
+
+//---------------------------
+__global__ void RotateImageA_usingLUT_kernel(float *inImagekernel, float *outputImagekernel, int inWidth, int inHeight, int outWidth, int outHeight, double theta, int *pLut)
+
+{
+	// Set row and colum for thread.
+	int row = blockIdx.y * blockDim.y + threadIdx.y;
+	int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+
+	//if (col < outWidth && row < outHeight && tu >= 0 && tu < inWidth && tv >= 0 && tv < inHeight)
+	{
+		if ( pLut[row*outWidth + col] >= 0 )
+			outputImagekernel[row*outWidth + col] = inImagekernel[pLut[row*outWidth + col]];//tex2D(tex_rot_imgA, tu + inWidth/2 , tv + inHeight/2);
+		//outputImagekernel[row*outWidth + col] = getInterpolatedPixelA(tu, tv, inWidth, inHeight, inImagekernel);
+	}
+}
+
 
 __global__ void SmoothBorder_kernel(float *inImagekernel, float *outputImagekernel, unsigned char *pMaskData, int iWidth, int iHeight, int iWin)
 {
@@ -165,11 +185,11 @@ __global__ void Memcpy_us_to_float__kernel(unsigned short *pInData, float *pOutD
 }
 
 //----------------------------------------------------------------------------
-unsigned char *GetMaskDataAfterRotation(int iW, int iH, double theta, int &iNewW, int &iNewH)
+unsigned char *GetMaskDataAfterRotation(int iW, int iH, double theta, double fMag, int &iNewW, int &iNewH)
 {
 	unsigned char *pMaskData = NULL;
 	//int iNewW=0, iNewH = 0;
-	FindDimensionAfterRotation(iW, iH, theta, iNewW, iNewH);
+	FindDimensionAfterRotation(iW, iH, theta, fMag, iNewW, iNewH);
 	if (iNewW <= 0 || iNewH <= 0) return NULL;
 	pMaskData = new unsigned char[iNewW*iNewH];
 	unsigned char *pTempData = new unsigned char[iW*iH];
@@ -203,8 +223,48 @@ unsigned char *GetMaskDataAfterRotation(int iW, int iH, double theta, int &iNewW
 	return pMaskData;
 }
 
+//--------------------------------------------------------------------
+void RotateImage_GetLUT_cpu(int iW, int iH, int *pLut, int iOutWidth, int iOutHeight, double theta, double fMagnification)
+{
+	for (long i = 0; i < iOutWidth * iOutHeight; i++) pLut[i] = -1;
+	long iInFrameSize = iW * iH;
+	double fMag = 1.0 / fMagnification;
+	float rads = (theta) * 3.1415926 / 180.0;
+	float cs = cos(rads); // precalculate these values
+	float ss = sin(rads);
+	float xcenterOut = (float)(iOutWidth) / 2.0;   // use float here!
+	float ycenterOut = (float)(iOutHeight) / 2.0;
+	float xcenterIn = (float)iW / 2.0f;
+	float ycenterIn = (float)iH / 2.0f;
+	for (int row = 0; row < iOutHeight; row++)
+	{
+		for (int col = 0; col < iOutWidth; col++)
+		{
+			float u = (float)col - xcenterOut;
+			float v = (float)row - ycenterOut;
+			float tu = u * cs - v * ss;
+			float tv = v * cs + u * ss;
+
+			tu *= fMag;
+			tv *= fMag;
+			tu += xcenterIn;
+			tv += ycenterIn;
+			//tu += (iOutWidth - iW) / 2;
+			//tu += (iOutHeight - iH) / 2;
+
+			if (tu >= 0 && tu < iW && tv >= 0 && tv < iH)
+			{
+				//pOutData[row*iOutWidth + col] = getInterpolatedPixel_TF(tu, tv, iW, iH,  pData);
+				long offset = (int)tv*iW + (int)tu;
+				// pLut[offset] = row*iOutWidth + col;
+				pLut[row*iOutWidth + col] = offset;
+			}
+		}
+	}
+}
+
 //--------------------------------------------------------------------------------
-cudaError_t RotateAddImage_tex_Cuda(unsigned short* pInData, int inWidth, int inHeight, int iNumFrames, unsigned short *pOutData, int outWidth, int outHeight, double theta, double fScale)
+cudaError_t RotateAddImage_tex_Cuda(unsigned short* pInData, int inWidth, int inHeight, int iNumFrames, unsigned short *pOutData, int outWidth, int outHeight, double theta, double fScale, double fMag)
 {
 
 	cudaArray *cuArray_img;
@@ -215,6 +275,8 @@ cudaError_t RotateAddImage_tex_Cuda(unsigned short* pInData, int inWidth, int in
 	unsigned char *d_pMaskData = 0;
 	float *pTempInData = 0;
 	float *pTempOutData = 0;
+	int *pLut = 0;
+	int *d_pLut = 0;
 
 	int iFrameSize = inWidth * inHeight;
 	int iOutFrameSize = outWidth * outHeight;
@@ -222,16 +284,20 @@ cudaError_t RotateAddImage_tex_Cuda(unsigned short* pInData, int inWidth, int in
 	pTempInData = new float[iFrameSize];
 	pTempOutData = new float[iOutFrameSize];
 
+
 	cudaError_t cudaStatus = cudaErrorInvalidValue;
 
 	int iRotWidth, int iRotHeight;
-	FindDimensionAfterRotation(inWidth, inHeight, theta, iRotWidth, iRotHeight);
+	FindDimensionAfterRotation(inWidth, inHeight, theta, fMag, iRotWidth, iRotHeight);
 
 	int iRotatedFrameSize = iRotWidth * iRotHeight;
 
+	pLut = new int[iRotatedFrameSize];
+	RotateImage_GetLUT_cpu(inWidth, inHeight, pLut, iRotWidth, iRotHeight, theta, fMag);
+
 	//Get mask data to cover arround the edges after rotation
 	int iNewMaskW = 0, iNewMaskH = 0;
-	unsigned char *pMaskData = GetMaskDataAfterRotation(inWidth, inHeight, theta, iNewMaskW , iNewMaskH);
+	unsigned char *pMaskData = GetMaskDataAfterRotation(inWidth, inHeight, theta, fMag, iNewMaskW , iNewMaskH);
 	if (iNewMaskW != iRotWidth || iNewMaskH != iRotHeight)
 	{
 		printf("dimension mismatch when creating mask\n");
@@ -259,6 +325,8 @@ cudaError_t RotateAddImage_tex_Cuda(unsigned short* pInData, int inWidth, int in
 //	tex_rot_imgA.normalized = true;    // access with normalized texture coordinates
 //	cudaBindTextureToArray(tex_rot_imgA, cuArray_img, channelDesc);
 
+
+
 	cudaStatus = cudaMalloc((void**)&d_OutData, iOutFrameSize * sizeof(float));
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaMalloc failed!");
@@ -283,12 +351,19 @@ cudaError_t RotateAddImage_tex_Cuda(unsigned short* pInData, int inWidth, int in
 		goto Error;
 	}
 		
+	cudaStatus = cudaMalloc((void**)&d_pLut, iRotatedFrameSize * sizeof(int));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		goto Error;
+	}
+	cudaMemcpy(d_pLut, pLut, iRotatedFrameSize * sizeof(int), cudaMemcpyHostToDevice);
+
 	cudaStatus = cudaMalloc((void**)&d_pMaskData, iRotatedFrameSize * sizeof(unsigned char) );
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaMalloc failed!");
 		goto Error;
 	}
-	cudaMemcpy(d_pMaskData, pMaskData, iRotatedFrameSize * sizeof(unsigned char), cudaMemcpyHostToDevice);
+//	cudaMemcpy(d_pMaskData, pMaskData, iRotatedFrameSize * sizeof(unsigned char), cudaMemcpyHostToDevice);
 
 	int TILE_SIZE_X = 16;
 	int TILE_SIZE_Y = 16;
@@ -314,14 +389,15 @@ cudaError_t RotateAddImage_tex_Cuda(unsigned short* pInData, int inWidth, int in
 			//for (int k = 0; k < iFrameSize; k++)
 			//	pTempInData[k] = (float)pInDataRef[k];
 			//cudaMemcpy(d_InData, pTempInData, iFrameSize * sizeof(float), cudaMemcpyHostToDevice);
-			/////////////////////
+			///////////////////// 
 
 			cudaMemcpy(d_InData_us, &pInData[iZIndex * iFrameSize], iFrameSize * sizeof(unsigned short), cudaMemcpyHostToDevice);
 			Memcpy_us_to_float__kernel << <dimGrid_in, dimBlock>> > (d_InData_us, d_InData, inWidth, inHeight);
 
 			SetValues_kernel << <dimGrid, dimBlock >> > (d_RotatedFrameData, 0, iRotWidth, iRotHeight);
-			RotateImageA_kernel << <dimGrid, dimBlock >> > (d_InData, &d_RotatedFrameData[0], inWidth, inHeight, iRotWidth, iRotHeight, theta);
-			SmoothBorder_kernel << <dimGrid, dimBlock >> > (&d_RotatedFrameData[0], &d_RotatedFrameData[iRotatedFrameSize], d_pMaskData, iRotWidth, iRotHeight, 3);
+			RotateImageA_kernel << <dimGrid, dimBlock >> > (d_InData, &d_RotatedFrameData[0], inWidth, inHeight, iRotWidth, iRotHeight, theta, 1.0/fMag);
+		//	RotateImageA_usingLUT_kernel << <dimGrid, dimBlock >> > (d_InData, &d_RotatedFrameData[0], inWidth, inHeight, iRotWidth, iRotHeight, theta, d_pLut);
+			//SmoothBorder_kernel << <dimGrid, dimBlock >> > (&d_RotatedFrameData[0], &d_RotatedFrameData[iRotatedFrameSize], d_pMaskData, iRotWidth, iRotHeight, 3);
 			TDS_AddA_kernel << <dimGrid, dimBlock >> > (&d_RotatedFrameData[0], &d_OutData[iCurIndex], iRotWidth, iRotHeight);
 			
 			cudaDeviceSynchronize();
@@ -363,9 +439,11 @@ Error:
 	if (d_RotatedFrameData!=NULL) cudaFree(d_RotatedFrameData);
 	if (d_pMaskData!=NULL)cudaFree(d_pMaskData);
 	if (d_InData_us != NULL)cudaFree(d_InData_us);
+	if (d_pLut != NULL) cudaFree(d_pLut);
 	delete[] pMaskData;
 	delete[] pTempInData;
 	delete[] pTempOutData;
+	delete[] pLut;
 	return cudaStatus;
 }
 

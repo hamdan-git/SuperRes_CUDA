@@ -1,7 +1,7 @@
 #pragma once
 
 //----------------------------------------------------------------------------
-void FindDimensionAfterRotation(int iInWidth, int iInHeight, double theta, int &iOutWidth, int &iOutHeight);
+void FindDimensionAfterRotation(int iInWidth, int iInHeight, double theta, double fMag, int &iOutWidth, int &iOutHeight);
 
 template<typename T>
 class IPTools

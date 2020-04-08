@@ -10,7 +10,7 @@
 #include "IPTools.h"
 
 //----------------------------------------------------------------------------
-void FindDimentionAfterRotationAdd(int iInWidth, int iInHeight, double theta, int &iOutWidth, int &iOutHeight)
+void FindDimentionAfterRotationAdd(int iInWidth, int iInHeight, double theta, double fMagnification, int &iOutWidth, int &iOutHeight)
 {
 	// Compute dimensions of the resulting bitmap
 	// First get the coordinates of the 3 corners other than origin
@@ -31,6 +31,9 @@ void FindDimentionAfterRotationAdd(int iInWidth, int iInHeight, double theta, in
 
 	iOutWidth = maxx - minx;
 	iOutHeight = maxy - miny;
+
+	iOutWidth *= fMagnification;
+	iOutHeight *= fMagnification;
 }
 
 //-----------------------------------------------------------------
@@ -131,13 +134,13 @@ void FindDimentionAfterRotationAdd(int iInWidth, int iInHeight, double theta, in
 //}
 
 //--------------------------------------------------------------
-void TestRotateAdd_gpu(unsigned short *pData, int iW, int iH, int iD, double theta, float fShiftStep)
+void TestRotateAdd_gpu(unsigned short *pData, int iW, int iH, int iD, double theta, float fShiftStep, double fMag)
 {
 
 	int iRotWidth = iW;
 	int iRotHeight = iH;
 
-	FindDimentionAfterRotationAdd(iW, iH, theta, iRotWidth, iRotHeight);
+	FindDimentionAfterRotationAdd(iW, iH, theta, fMag, iRotWidth, iRotHeight);
 
 	int iOutWidth = iRotWidth;
 	int iOutHeight = iRotHeight + iD * fShiftStep + 2;;
@@ -165,7 +168,7 @@ void TestRotateAdd_gpu(unsigned short *pData, int iW, int iH, int iD, double the
 	//WriteRawData<unsigned char>("c:\\Temp\\MaskData.raw", pMaskData, iNewMaskW, iNewMaskH);
 	//for (int i = 0; i < iIterations; i++)
 	{
-		RotateAddImage_tex_Cuda(pData, iW, iH, iD, pOutData, iOutWidth, iOutHeight,  theta, fShiftStep);
+		RotateAddImage_tex_Cuda(pData, iW, iH, iD, pOutData, iOutWidth, iOutHeight, theta, fShiftStep, fMag);
 	}
 
 	printf("Rotate gpu (tex) took average of %f s  (%d, %d)\n", ((double)(clock() - start) / (double)CLOCKS_PER_SEC) , iOutWidth, iOutHeight);
@@ -182,18 +185,22 @@ cleanup_TestRotateAdd_gpu:
 //--------------------------
 void TestRorateAddImage()
 {
-	int iWidth = 2048;// 1024;
-	int iHeight = 64;// 256;
-	int iNumFrames = 2000;
-	double fTheta = -15.5;
-	double fShiftScale = 0.65;
+	int iWidth = 1024;// 2048;// 1024;
+	int iHeight = 256;// 64;// 256;
+	int iNumFrames = 1882;// 2000;
+	double fTheta = 5.35;// -15.5;
+	double fShiftScale = 0.45;// 0.65;
+	double fMagnification = 2.0;
 
-	unsigned short *pInImage = ReadRawData<unsigned short>("D:\\Images\\XCounter\\Customers\\0_Internal\\Hamdan\\SuperRes\\Detector2\\Target\\frame_200hz_ang_-15.5_angled_target_gainCor_u16.raw", iWidth, iHeight, iNumFrames);
+	fShiftScale *= fMagnification;
+
+	//unsigned short *pInImage = ReadRawData<unsigned short>("D:\\Images\\XCounter\\Customers\\0_Internal\\Hamdan\\SuperRes\\Detector2\\Target\\frame_200hz_ang_-15.5_angled_target_gainCor_u16.raw", iWidth, iHeight, iNumFrames);
+	unsigned short *pInImage = ReadRawData<unsigned short>("D:\\Images\\XCounter\\Customers\\0_Internal\\Mattias\\SuperRes\\Speed_5_110Hz_1024X256X1802_u16.raw", iWidth, iHeight, iNumFrames);
 	if (pInImage == NULL) { printf("null input"); exit(0); }
 
 
 	//TestRotate_cpu(pInImage, iWidth, iHeight, fTheta);
-	TestRotateAdd_gpu(pInImage, iWidth, iHeight, iNumFrames, fTheta, fShiftScale);
+	TestRotateAdd_gpu(pInImage, iWidth, iHeight, iNumFrames, fTheta, fShiftScale, fMagnification);
 
 
 
