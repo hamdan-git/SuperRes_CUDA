@@ -7,7 +7,22 @@
 #include <ippi.h>
 #include <ipps.h>
 #include <algorithm>
+#include <string>
+#include <iostream>
 #include "IPTools.h"
+#include "CommonImage.h"
+
+//---------------------------------------------------------------------
+void PrintHelp()
+{
+	std::cout << "Hint\n";
+	std::cout << "exe <tif_input_filename> <tif_output_filename> options\n";
+	std::cout << "-a angle_val\ttilt angle\n";
+	std::cout << "-s step_val\tstep\n";
+	std::cout << "-f or -r\tforward or backward regarding the input image acquition\n";
+	std::cout << "-t <algo type>\tgpu or gpu_lut using look up table\n";
+	std::cout << "-m mag_val\tmagnification\n";
+}
 
 //----------------------------------------------------------------------------
 void FindDimentionAfterRotationAdd(int iInWidth, int iInHeight, double theta, double fMagnification, int &iOutWidth, int &iOutHeight)
@@ -36,161 +51,70 @@ void FindDimentionAfterRotationAdd(int iInWidth, int iInHeight, double theta, do
 	iOutHeight *= fMagnification;
 }
 
-//-----------------------------------------------------------------
-//IppStatus RotateImage_ipp(float *pInData, int iSrcWidth, int iSrcHeight, float *pOutData, int iDestWidth, int iDestHeight, double fAngle)
-//{
-//	IppiSize roiSize = { iDestWidth / 1, iDestHeight };
-//	IppiRect srcRoi = { 0, 0, iSrcWidth, iSrcHeight };
-//
-//	/* affine transform coefficients */
-//	double coeffs[2][3] = { 0 };
-//
-//	/* affine transform bounds */
-//	double bound[2][2] = { 0 };
-//
-//	IppStatus status = ippiGetRotateTransform(fAngle, 0, 0, coeffs);
-//
-//	/* get bounds of transformed image */
-//	if (status >= ippStsNoErr)
-//		status = ippiGetAffineBound(srcRoi, bound, coeffs);
-//
-//
-//	/* fit source image to dst */
-//	coeffs[0][2] = -bound[0][0] + (iDestWidth / 1.f - (bound[1][0] - bound[0][0])) / 1.f;
-//	coeffs[1][2] = -bound[0][1] + (iDestHeight / 1 - (bound[1][1] - bound[0][1])) / 1.f;
-//
-//	/* set destination ROI for the not blurred image */
-//	//pDstRoi = pBlurRot + roiSize.width * numChannels;
-//	IppiSize srcSize = { iSrcWidth, iSrcHeight };
-//	if (status >= ippStsNoErr)
-//		status = warpAffine(pInData, srcSize, iSrcWidth * 4, pOutData, roiSize, iDestWidth * 4, coeffs);
-//
-//	return status;
-//}
 
 //--------------------------------------------------------------
-//void TestRotate_cpu(float *pData, int iW, int iH, double theta)
-//{
-//
-//	int iOutWidth = iW;
-//	int iOutHeight = iH;
-//
-//	FindDimentionAfterRotation(iW, iH, theta, iOutWidth, iOutHeight);
-//
-//	int iOutFrameSize = iOutWidth * iOutHeight;
-//
-//	float *pOutData = new float[iOutFrameSize];
-//
-//	clock_t start = clock();
-//	for (int i = 0; i < iIterations; i++)
-//	{
-//		IppStatus st = RotateImage_ipp(pData, iW, iH, pOutData, iOutWidth, iOutHeight, theta);
-//	}
-//
-//	printf("Rotate cpu (ipp) took average of %f s  dim=(%d, %d)\n", ((double)(clock() - start) / (double)CLOCKS_PER_SEC) / iIterations, iOutWidth, iOutHeight);
-//
-//	WriteRawData("c:\\Temp\\Rotate_ipp_cpu.raw", pOutData, iOutWidth, iOutHeight);
-//
-//	delete[] pOutData;
-//}
-
-//----------------------------------------------------------------------------
-//unsigned char *GetMaskDataAfterRotation(int iW, int iH, double theta, int &iNewW, int &iNewH )
-//{
-//	unsigned char *pMaskData = NULL;
-//	//int iNewW=0, iNewH = 0;
-//	FindDimensionAfterRotation(iW, iH, theta, iNewW, iNewH);
-//	if (iNewW <= 0 || iNewH <= 0) return NULL;
-//	pMaskData = new unsigned char[iNewW*iNewH];
-//	unsigned char *pTempData = new unsigned char[iW*iH];
-//	unsigned char *pRotatedTempData = new unsigned char[iNewW*iNewH];
-//	memset(pRotatedTempData, 0, iNewW*iNewH);
-//
-//	for (long i = 0; i < iW*iH; i++)
-//		pTempData[i] = 1;
-//
-//	unsigned char *pMaks_rot_eroded = new unsigned char[iNewW*iNewH];
-//	memset(pMaks_rot_eroded, 0, iNewW*iNewH);
-//	IPTools<unsigned char>::RotateImage_cpu(pTempData, iW, iH, pRotatedTempData, iNewW, iNewH, theta, 0);
-//	IPTools<unsigned char>::DoErosion(pRotatedTempData, pMaks_rot_eroded, iNewW, iNewH, 3);
-//	float *pDisData = new float[iNewW*iNewH];
-//	IPTools<unsigned char>::GetDistanceMap(pMaks_rot_eroded, iNewW, iNewH, 0, pDisData);
-//
-//	//WriteRawData<unsigned char>("c:\\Temp\\Dist.raw", pMaks_rot_eroded, iNewW, iNewH);
-//
-//	memset(pMaskData, 0, 1 * iNewW*iNewH);
-//	for (long i = 0; i < iNewW*iNewH; i++)
-//	{
-//		float fVal = pDisData[i];
-//		if (fVal > 0.0f && fVal < 25.0f)
-//			pMaskData[i] = 1;
-//	}
-//
-//	delete[] pTempData;
-//	delete[] pRotatedTempData;
-//	delete[] pMaks_rot_eroded;
-//	delete[] pDisData;
-//	return pMaskData;
-//}
-
-//--------------------------------------------------------------
-void TestRotateAdd_gpu(unsigned short *pData, int iW, int iH, int iD, double theta, float fShiftStep, double fMag)
+unsigned char * TestRotateAdd_gpu(unsigned char *pData, int iW, int iH, int iD, int pixType, int &iOutWidth, int &iOutHeight, double theta, float fShiftStep, double fMag, bool bReversed, bool bUseLUT)
 {
-
+	unsigned char *pOutData = NULL;
+	unsigned short *pOutDataKir = NULL;
 	int iRotWidth = iW;
 	int iRotHeight = iH;
 
 	FindDimentionAfterRotationAdd(iW, iH, theta, fMag, iRotWidth, iRotHeight);
 
-	int iOutWidth = iRotWidth;
-	int iOutHeight = iRotHeight + iD * fShiftStep + 2;;
+	iOutWidth = iRotWidth;
+	iOutHeight = iRotHeight + iD * fShiftStep + 2;;
 
+	int pixSize = 2;
+	switch (pixType)
+	{
+	case CIMG_PIXEL_TYPE_USG_8: pixSize = 1; break;
+	case CIMG_PIXEL_TYPE_USG_16: pixSize = 2; break;
+	case CIMG_PIXEL_TYPE_USG_32: pixSize = 4; break;
+	case CIMG_PIXEL_TYPE_FLOAT: pixSize = 4; break;
+	};
 
 	int iOutFrameSize = iOutWidth * iOutHeight;
 
-	unsigned short *pOutData = new unsigned short[iOutFrameSize];
+	pOutData = new unsigned char[iOutFrameSize*pixSize];
+	pOutDataKir = new unsigned short[iOutFrameSize];
 
-	memset(pOutData, 0, sizeof(unsigned short)*iOutFrameSize);
+	memset(pOutData, 0, pixSize*iOutFrameSize);
 
 	addWithCuda();
 
 
 	clock_t start = clock();
+	if (bUseLUT)
+		RotateAddImage_lut_Cuda(pData, iW, iH, iD, pOutData, iOutWidth, iOutHeight, pixType, theta, fShiftStep, fMag, bReversed);
+	else
+		RotateAddImage_Cuda(pData, iW, iH, iD, pOutData, iOutWidth, iOutHeight, pixType, theta, fShiftStep, fMag, bReversed);
 
-	//Get mask data to cover arround the edges after rotation
-	//int iNewMaskW = 0, iNewMaskH = 0;
-	//unsigned char *pMaskData = GetMaskDataAfterRotation(iW, iH, theta, iNewMaskW , iNewMaskH);
-	//if (iNewMaskW != iRotWidth || iNewMaskH != iRotHeight)
-	//{
-	//	printf("dimension mismatch\n");
-	//	goto cleanup_TestRotateAdd_gpu;
-	//}
-	//WriteRawData<unsigned char>("c:\\Temp\\MaskData.raw", pMaskData, iNewMaskW, iNewMaskH);
-	//for (int i = 0; i < iIterations; i++)
-	{
-		RotateAddImage_tex_Cuda(pData, iW, iH, iD, pOutData, iOutWidth, iOutHeight, theta, fShiftStep, fMag);
-	}
 
 	printf("Rotate gpu (tex) took average of %f s  (%d, %d)\n", ((double)(clock() - start) / (double)CLOCKS_PER_SEC) , iOutWidth, iOutHeight);
 
-	WriteRawData<unsigned short>("c:\\Temp\\RotateAddImage_gpu.raw", pOutData, iOutWidth, iOutHeight);
+	//WriteRawData<unsigned char>("c:\\Temp\\RotateAddImage_gpu.raw", pOutData, iOutWidth*pixSize, iOutHeight);
+	//WriteRawData<unsigned short>("c:\\Temp\\RotateAddImage_gpu.raw", pOutDataKir, iOutWidth, iOutHeight);
+	//WriteRawData<unsigned char>("c:\\Temp\\RotateAddImage_gpu.raw", pData, iW*pixSize, iH, iD);
 
-cleanup_TestRotateAdd_gpu:
-	delete[] pOutData;
+
+	//delete[] pOutData;
 	//delete[] pMaskData;
+	return pOutData;
 }
 
 //cudaError_t Filtering_1D_Cuda(float *pInData, float *pOutData, int iWidth, int iHeight, float *pKernel, int iKernelSize, int dir)
 
 //--------------------------
-void TestRorateAddImage()
+void TestRotateAddImage(int argc,  char *argv[])
 {
+#ifdef _DEBUG
 	int iWidth = 1024;// 2048;// 1024;
 	int iHeight = 256;// 64;// 256;
 	int iNumFrames = 1882;// 2000;
-	double fTheta = 5.35;// -15.5;
+	double fTheta = 5.45;// -15.5;
 	double fShiftScale = 0.45;// 0.65;
-	double fMagnification = 2.0;
+	double fMagnification = 1.0;
 
 	fShiftScale *= fMagnification;
 
@@ -201,8 +125,99 @@ void TestRorateAddImage()
 
 	//TestRotate_cpu(pInImage, iWidth, iHeight, fTheta);
 	TestRotateAdd_gpu(pInImage, iWidth, iHeight, iNumFrames, fTheta, fShiftScale, fMagnification);
-
-
-
 	delete[] pInImage;
+#else
+	if (argc < 3)
+	{
+		PrintHelp();
+		exit(0);
+	}
+	std::string strFilename(argv[1]);
+	std::string strFilenameOut(argv[2]);
+	std::string strAlgoType = "gpu_lut"; //default
+	double fTheta = 0.0;
+	double fStep = 1.0;
+	double fMagnification = 1.0;
+	bool bReversed = false;
+	for (int i = 2; i < argc; i++)
+	{
+		if (strcmp(argv[i], "-a") == 0)
+		{
+			fTheta = atof(argv[i + 1]);
+			i++;
+		}
+		else if (strcmp(argv[i], "-s") == 0)
+		{
+			fStep = atof(argv[i + 1]);
+			i++;
+		}
+		else if (strcmp(argv[i], "-m") == 0)
+		{
+			fMagnification = atof(argv[i + 1]);
+			i++;
+		}
+		else if (strcmp(argv[i], "-f") == 0)
+		{
+			bReversed = false;
+		}
+		else if (strcmp(argv[i], "-r") == 0)
+		{
+			bReversed = true;
+		}
+		else if (strcmp(argv[i], "-t") == 0)
+		{
+			strAlgoType = std::string(argv[i + 1]);
+			i++;
+		}
+	}
+
+	std::cout << "To do!\n";
+	std::cout << "Input file = " << strFilename << "\n";
+	std::cout << "Theta = " << fTheta << "\n";
+	std::cout << "Steps = " << fStep << "\n";
+	std::cout << "Magnification = " << fMagnification << "\n";
+	bReversed == true ? std::cout << "revered scanning\n" : std::cout << "forward scanning\n";
+	std::cout << "Type = " << strAlgoType << "\n";
+
+	unsigned char *pOutData = NULL;
+	try
+	{
+		bool bUseLUT = true;
+		if (strAlgoType.compare("gpu") == 0)
+			bUseLUT = false;
+
+		CIMG_RC cm_rc;
+		CIMG cimg;
+		if ((cm_rc = cimg.ReadDataFromImageFile(strFilename.c_str())) != CIMG_RC_OK)
+		{
+			printf("Problem read readinf tiff file %s with error %d\n", strFilename.c_str(), cm_rc);
+			exit(0);
+		}
+		CIMG_Header header = cimg.header;
+
+		int iOutWidth = 0, iOutHeight = 0;
+		pOutData = TestRotateAdd_gpu((unsigned char*)cimg.GetDataPointer(), header.width, header.height, header.num_frames, header.pixType, iOutWidth, iOutHeight,  fTheta, fStep, fMagnification, bReversed, bUseLUT);
+		if (pOutData == NULL) throw new std::exception("Returned result image is invalid");
+		if (iOutWidth<=0 || iOutHeight<=0) throw new std::exception("Returned result image dimesion is invalid");
+
+		int pixSize = 2;
+		switch (header.pixType)
+		{
+		case CIMG_PIXEL_TYPE_USG_8: pixSize = 1; break;
+		case CIMG_PIXEL_TYPE_USG_16: pixSize = 2; break;
+		case CIMG_PIXEL_TYPE_USG_32: pixSize = 4; break;
+		case CIMG_PIXEL_TYPE_FLOAT: pixSize = 4; break;
+		};
+		CIMG outImage;
+		outImage.Create(iOutWidth, iOutHeight, 1, header.pixType);
+		memcpy(outImage.GetDataPointer(), pOutData, pixSize * iOutWidth *iOutHeight);
+		outImage.WriteDataToTifFile(strFilenameOut.c_str());
+
+	}
+	catch (std::exception ex)
+	{
+		std::cout << ex.what();
+	}
+	if (pOutData != NULL) delete[] pOutData;
+#endif
 }
