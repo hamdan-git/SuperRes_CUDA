@@ -110,11 +110,10 @@ __global__ void RotateImageA_usingLUT_kernel(float *inImagekernel, float *output
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
 
 	int offset = row * outWidth + col;
-	//if (col < outWidth && row < outHeight && tu >= 0 && tu < inWidth && tv >= 0 && tv < inHeight)
+	if (col < outWidth && row < outHeight )
 	{
 		if ( pLut[offset] >= 0 )
-			outputImagekernel[offset] = inImagekernel[pLut[offset]];//tex2D(tex_rot_imgA, tu + inWidth/2 , tv + inHeight/2);
-		//outputImagekernel[row*outWidth + col] = getInterpolatedPixelA(tu, tv, inWidth, inHeight, inImagekernel);
+			outputImagekernel[offset] = inImagekernel[pLut[offset]];
 	}
 }
 
@@ -157,10 +156,29 @@ __global__ void TDS_AddA_kernel(float *inFrameData,  float *outputImageData, int
 	int row = blockIdx.y * blockDim.y + threadIdx.y;
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
 
+	int offset = row * inWidth + col;
 	if ( col < inWidth && row < inHeight)
-		outputImageData[row*inWidth + col] += inFrameData[row*inWidth + col];
+		outputImageData[offset] += inFrameData[offset];
 
 	//__syncthreads();
+}
+
+//-------------------------------------------------------------------
+__global__ void TDS_AddA_conditional_kernel(float *inFrameData, float *outputImageData, int inWidth, int inHeight)
+
+{
+	// Set row and colum for thread.
+	int row = blockIdx.y * blockDim.y + threadIdx.y;
+	int col = blockIdx.x * blockDim.x + threadIdx.x;
+	__shared__ float pVals[2];
+	int offset = row * inWidth + col;
+
+	if (col < inWidth && row < inHeight)
+	{
+		float fVal = inFrameData[offset];
+		if ( fVal > 0.0f)
+			outputImageData[offset] += fVal;
+	}
 }
 
 //-------------------------------------------------------------------
@@ -632,7 +650,7 @@ cudaError_t RotateAddImage_Cuda(unsigned char* pInData, int inWidth, int inHeigh
 		if (fShiftRow >= outHeight) break;
 		iPrevIndex = iCurIndex;
 	}
-
+	
 
 	// Check for any errors launching the kernel
 	cudaStatus = cudaGetLastError();
@@ -754,8 +772,8 @@ cudaError_t RotateAddImage_lut_Cuda(unsigned char* pInData, int inWidth, int inH
 
 
 
-	int TILE_SIZE_X = 16;
-	int TILE_SIZE_Y = 16;
+	int TILE_SIZE_X = 32;
+	int TILE_SIZE_Y = 8;
 	dim3 dimBlock(TILE_SIZE_X, TILE_SIZE_Y);
 
 	dim3 dimGrid((int)ceil((float)iRotWidth / (float)TILE_SIZE_X), (int)ceil((float)iRotHeight / (float)TILE_SIZE_Y));
@@ -788,7 +806,8 @@ cudaError_t RotateAddImage_lut_Cuda(unsigned char* pInData, int inWidth, int inH
 			SetValues_kernel << <dimGrid, dimBlock >> > (d_RotatedFrameData, 0, iRotWidth, iRotHeight);
 			//RotateImageA_kernel << <dimGrid, dimBlock >> > (d_InData, &d_RotatedFrameData[0], inWidth, inHeight, iRotWidth, iRotHeight, theta, 1.0 / fMag);
 			RotateImageA_usingLUT_kernel << <dimGrid, dimBlock >> > (d_InData, &d_RotatedFrameData[0], inWidth, inHeight, iRotWidth, iRotHeight, theta, d_pLut);
-			TDS_AddA_kernel << <dimGrid, dimBlock >> > (&d_RotatedFrameData[0], &d_OutData[iCurIndex], iRotWidth, iRotHeight);
+//			TDS_AddA_kernel << <dimGrid, dimBlock >> > (&d_RotatedFrameData[0], &d_OutData[iCurIndex], iRotWidth, iRotHeight);
+			TDS_AddA_conditional_kernel << <dimGrid, dimBlock >> > (&d_RotatedFrameData[0], &d_OutData[iCurIndex], iRotWidth, iRotHeight);
 
 			cudaDeviceSynchronize();
 		}

@@ -179,6 +179,8 @@ void TestRotateAddImage(int argc,  char *argv[])
 	bReversed == true ? std::cout << "revered scanning\n" : std::cout << "forward scanning\n";
 	std::cout << "Type = " << strAlgoType << "\n";
 
+	fStep *= fMagnification;
+
 	unsigned char *pOutData = NULL;
 	try
 	{
